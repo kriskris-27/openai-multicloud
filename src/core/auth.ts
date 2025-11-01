@@ -78,7 +78,7 @@ type GoogleTokenResponse = {
   id_token?: string;
 };
 
-type GoogleIdTokenPayload = {
+export type GoogleIdTokenPayload = {
   sub: string;
   email?: string;
   email_verified?: boolean;
@@ -111,11 +111,15 @@ async function exchangeCodeForTokens(code: string): Promise<GoogleTokenResponse>
   return (await response.json()) as GoogleTokenResponse;
 }
 
-async function verifyGoogleIdToken(idToken: string, expectedNonce: string): Promise<GoogleIdTokenPayload> {
-  const { payload } = await jwtVerify(idToken, googleJwks, {
+export async function verifyGoogleIdToken(
+  idToken: string,
+  options?: { nonce?: string }
+): Promise<GoogleIdTokenPayload> {
+  const getKey = googleJwks as Parameters<typeof jwtVerify>[1];
+  const { payload } = await jwtVerify(idToken, getKey, {
     audience: env.GOOGLE_CLIENT_ID,
     issuer: GOOGLE_ISSUERS,
-    nonce: expectedNonce,
+    ...(options?.nonce ? { nonce: options.nonce } : {}),
   });
 
   const typedPayload = payload as GoogleIdTokenPayload;
@@ -167,7 +171,7 @@ export async function handleAuthCallback(req: IncomingMessage, res: ServerRespon
       throw new Error("Missing id_token in Google response");
     }
 
-    const payload = await verifyGoogleIdToken(tokens.id_token, storedState.nonce);
+    const payload = await verifyGoogleIdToken(tokens.id_token, { nonce: storedState.nonce });
     const user = await upsertGoogleUser({
       sub: payload.sub,
       email: payload.email!,

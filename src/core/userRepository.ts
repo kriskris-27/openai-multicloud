@@ -26,13 +26,13 @@ export async function upsertGoogleUser(profile: GoogleProfile) {
     const user = await tx.user.upsert({
       where: { email: profile.email },
       update: {
-        name: profile.name ?? undefined,
-        avatarUrl: profile.picture ?? undefined,
+        name: profile.name ?? null,
+        avatarUrl: profile.picture ?? null,
       },
       create: {
         email: profile.email,
-        name: profile.name ?? undefined,
-        avatarUrl: profile.picture ?? undefined,
+        name: profile.name ?? null,
+        avatarUrl: profile.picture ?? null,
       },
     });
 

@@ -9,6 +9,10 @@ const EnvSchema = z.object({
   APP_NAME: z.string().default("openai-mcp-app"),
   APP_VERSION: z.string().default("1.0.0"),
   NODE_ENV: z.enum(["development", "production"]).default("development"),
+  APP_BASE_URL: z
+    .string()
+    .url()
+    .default(`http://localhost:${process.env.PORT ?? "3001"}`),
   DATABASE_URL: z.string().url(),
   DATABASE_SSL_REJECT_UNAUTHORIZED: z
     .enum(["true", "false"])
@@ -17,6 +21,15 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_ID: z.string(),
   GOOGLE_CLIENT_SECRET: z.string(),
   OAUTH_REDIRECT_URI: z.string().url(),
+  OAUTH_AUTHORIZATION_SERVER: z.string().url().default("https://accounts.google.com"),
+  OAUTH_RESOURCE_ID: z.string().optional(),
 });
 
-export const env = EnvSchema.parse(process.env);
+const parsedEnv = EnvSchema.parse(process.env);
+
+export const env = {
+  ...parsedEnv,
+  OAUTH_RESOURCE_ID: parsedEnv.OAUTH_RESOURCE_ID ?? parsedEnv.APP_BASE_URL,
+};
+
+            
