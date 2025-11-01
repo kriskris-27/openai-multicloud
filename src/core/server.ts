@@ -1,5 +1,6 @@
 // src/core/server.ts
 import { createServer } from "node:http";
+import { URL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { env } from "../config/env.js";
@@ -7,6 +8,7 @@ import { logger } from "../config/logger.js";
 import { registerRoutes } from "./routes.js";
 import { checkDatabaseConnection } from "./db.js";
 import { prisma } from "./prisma.js";
+import { handleAuthCallback, handleAuthLogin } from "./auth.js";
 
 export async function startServer() {
   const server = new McpServer({
@@ -28,6 +30,18 @@ export async function startServer() {
 
   const httpServer = createServer(async (req, res) => {
     try {
+      const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+      if (req.method === "GET" && requestUrl.pathname === "/auth/login") {
+        await handleAuthLogin(res);
+        return;
+      }
+
+      if (req.method === "GET" && requestUrl.pathname === "/auth/callback") {
+        await handleAuthCallback(req, res, requestUrl);
+        return;
+      }
+
       await transport.handleRequest(req, res);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

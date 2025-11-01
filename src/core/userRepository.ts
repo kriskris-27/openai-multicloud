@@ -13,3 +13,46 @@ export async function findUserByEmail(email: string) {
 export async function listUsers() {
   return prisma.user.findMany({ orderBy: { createdAt: "desc" } });
 }
+
+type GoogleProfile = {
+  sub: string;
+  email: string;
+  name?: string | null;
+  picture?: string | null;
+};
+
+export async function upsertGoogleUser(profile: GoogleProfile) {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.upsert({
+      where: { email: profile.email },
+      update: {
+        name: profile.name ?? undefined,
+        avatarUrl: profile.picture ?? undefined,
+      },
+      create: {
+        email: profile.email,
+        name: profile.name ?? undefined,
+        avatarUrl: profile.picture ?? undefined,
+      },
+    });
+
+    await tx.account.upsert({
+      where: {
+        provider_subject: {
+          provider: "google",
+          subject: profile.sub,
+        },
+      },
+      update: {
+        userId: user.id,
+      },
+      create: {
+        provider: "google",
+        subject: profile.sub,
+        userId: user.id,
+      },
+    });
+
+    return user;
+  });
+}

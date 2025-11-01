@@ -14,6 +14,9 @@ const EnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
+  GOOGLE_CLIENT_ID: z.string(),
+  GOOGLE_CLIENT_SECRET: z.string(),
+  OAUTH_REDIRECT_URI: z.string().url(),
 });
 
 export const env = EnvSchema.parse(process.env);
