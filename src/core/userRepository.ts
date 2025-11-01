@@ -14,14 +14,14 @@ export async function listUsers() {
   return prisma.user.findMany({ orderBy: { createdAt: "desc" } });
 }
 
-type GoogleProfile = {
+type IdentityProfile = {
   sub: string;
   email: string;
   name?: string | null;
   picture?: string | null;
 };
 
-export async function upsertGoogleUser(profile: GoogleProfile) {
+export async function upsertIdentityUser(provider: string, profile: IdentityProfile) {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.upsert({
       where: { email: profile.email },
@@ -39,7 +39,7 @@ export async function upsertGoogleUser(profile: GoogleProfile) {
     await tx.account.upsert({
       where: {
         provider_subject: {
-          provider: "google",
+          provider,
           subject: profile.sub,
         },
       },
@@ -47,7 +47,7 @@ export async function upsertGoogleUser(profile: GoogleProfile) {
         userId: user.id,
       },
       create: {
-        provider: "google",
+        provider,
         subject: profile.sub,
         userId: user.id,
       },

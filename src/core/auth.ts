@@ -2,19 +2,18 @@
 import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTVerifyOptions } from "jose";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
-import { upsertGoogleUser } from "./userRepository.js";
+import { upsertIdentityUser } from "./userRepository.js";
 
-const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const GOOGLE_OAUTH_SCOPES = ["openid", "email", "profile"];
+const AUTH0_AUTHORIZE_URL = new URL("/authorize", env.AUTH0_ISSUER).toString();
+const AUTH0_TOKEN_URL = new URL("/oauth/token", env.AUTH0_ISSUER).toString();
+const AUTH0_USERINFO_URL = new URL("/userinfo", env.AUTH0_ISSUER).toString();
+const AUTH0_OAUTH_SCOPES = ["openid", "email", "profile", "offline_access"];
 const OAUTH_STATE_TTL_MS = 5 * 60 * 1000;
-const GOOGLE_JWKS_URL = new URL("https://www.googleapis.com/oauth2/v3/certs");
-
-const googleJwks = createRemoteJWKSet(GOOGLE_JWKS_URL);
-const GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
+const auth0Jwks = createRemoteJWKSet(new URL("/.well-known/jwks.json", env.AUTH0_ISSUER));
+export const AUTH0_PROVIDER = "auth0";
 
 type StoredState = {
   createdAt: number;
@@ -49,14 +48,13 @@ function validateState(state: string | null): StoredState | null {
   return record;
 }
 
-function buildGoogleAuthorizeUrl(state: string, nonce: string) {
-  const url = new URL(GOOGLE_AUTHORIZE_URL);
-  url.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+function buildAuth0AuthorizeUrl(state: string, nonce: string) {
+  const url = new URL(AUTH0_AUTHORIZE_URL);
+  url.searchParams.set("client_id", env.AUTH0_CLIENT_ID);
   url.searchParams.set("redirect_uri", env.OAUTH_REDIRECT_URI);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", GOOGLE_OAUTH_SCOPES.join(" "));
-  url.searchParams.set("prompt", "consent");
-  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("scope", AUTH0_OAUTH_SCOPES.join(" "));
+  url.searchParams.set("audience", env.AUTH0_AUDIENCE);
   url.searchParams.set("state", state);
   url.searchParams.set("nonce", nonce);
   return url.toString();
@@ -64,12 +62,12 @@ function buildGoogleAuthorizeUrl(state: string, nonce: string) {
 
 export async function handleAuthLogin(res: ServerResponse) {
   const { state, nonce } = createState();
-  const authorizeUrl = buildGoogleAuthorizeUrl(state, nonce);
+  const authorizeUrl = buildAuth0AuthorizeUrl(state, nonce);
   res.writeHead(302, { Location: authorizeUrl });
   res.end();
 }
 
-type GoogleTokenResponse = {
+type Auth0TokenResponse = {
   access_token?: string;
   expires_in?: number;
   refresh_token?: string;
@@ -78,7 +76,7 @@ type GoogleTokenResponse = {
   id_token?: string;
 };
 
-export type GoogleIdTokenPayload = {
+export type Auth0TokenPayload = {
   sub: string;
   email?: string;
   email_verified?: boolean;
@@ -86,16 +84,16 @@ export type GoogleIdTokenPayload = {
   picture?: string;
 };
 
-async function exchangeCodeForTokens(code: string): Promise<GoogleTokenResponse> {
+async function exchangeCodeForTokens(code: string): Promise<Auth0TokenResponse> {
   const params = new URLSearchParams({
     code,
-    client_id: env.GOOGLE_CLIENT_ID,
-    client_secret: env.GOOGLE_CLIENT_SECRET,
+    client_id: env.AUTH0_CLIENT_ID,
+    client_secret: env.AUTH0_CLIENT_SECRET,
     redirect_uri: env.OAUTH_REDIRECT_URI,
     grant_type: "authorization_code",
   });
 
-  const response = await fetch(GOOGLE_TOKEN_URL, {
+  const response = await fetch(AUTH0_TOKEN_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -108,32 +106,81 @@ async function exchangeCodeForTokens(code: string): Promise<GoogleTokenResponse>
     throw new Error(`Token exchange failed: ${response.status} ${body}`);
   }
 
-  return (await response.json()) as GoogleTokenResponse;
+  return (await response.json()) as Auth0TokenResponse;
 }
 
-export async function verifyGoogleIdToken(
-  idToken: string,
-  options?: { nonce?: string }
-): Promise<GoogleIdTokenPayload> {
-  const getKey = googleJwks as Parameters<typeof jwtVerify>[1];
-  const { payload } = await jwtVerify(idToken, getKey, {
-    audience: env.GOOGLE_CLIENT_ID,
-    issuer: GOOGLE_ISSUERS,
-    ...(options?.nonce ? { nonce: options.nonce } : {}),
-  });
+async function fetchAuth0UserInfo(accessToken: string): Promise<Auth0TokenPayload | null> {
+  try {
+    const response = await fetch(AUTH0_USERINFO_URL, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
 
-  const typedPayload = payload as GoogleIdTokenPayload;
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as Auth0TokenPayload;
+    return data;
+  } catch (error) {
+    logger.warn(`Failed to fetch Auth0 userinfo: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+export async function verifyAuth0Token(token: string, options?: { nonce?: string }): Promise<Auth0TokenPayload> {
+  const getKey = auth0Jwks as JWTVerifyGetKey;
+  const allowedAudiences = [env.AUTH0_AUDIENCE, env.AUTH0_CLIENT_ID].filter(Boolean) as string[];
+
+  const verifyOptions: JWTVerifyOptions = {
+    issuer: env.AUTH0_ISSUER,
+  };
+
+  if (allowedAudiences.length > 1) {
+    verifyOptions.audience = allowedAudiences;
+  } else if (allowedAudiences.length === 1) {
+    const [audience] = allowedAudiences;
+    if (audience) {
+      verifyOptions.audience = audience;
+    }
+  }
+
+  const { nonce, ...restOptions } = options ?? {};
+  if (nonce) {
+    (verifyOptions as JWTVerifyOptions & { nonce: string }).nonce = nonce;
+  }
+
+  const { payload } = await jwtVerify(token, getKey, verifyOptions);
+
+  const typedPayload = payload as Auth0TokenPayload;
 
   if (!typedPayload.sub) {
-    throw new Error("Missing subject (sub) claim in ID token");
+    throw new Error("Missing subject (sub) claim in token");
   }
 
   if (!typedPayload.email) {
-    throw new Error("Missing email claim in ID token");
+    const userInfo = await fetchAuth0UserInfo(token);
+    if (userInfo?.email) {
+      typedPayload.email = userInfo.email;
+      if (userInfo.name !== undefined) {
+        typedPayload.name = userInfo.name;
+      }
+      if (userInfo.picture !== undefined) {
+        typedPayload.picture = userInfo.picture;
+      }
+      if (userInfo.email_verified !== undefined) {
+        typedPayload.email_verified = userInfo.email_verified;
+      }
+    }
+  }
+
+  if (!typedPayload.email) {
+    throw new Error("Missing email claim in token/userinfo");
   }
 
   if (typedPayload.email_verified === false) {
-    throw new Error("Google account email is not verified");
+    throw new Error("Auth0 account email is not verified");
   }
 
   return typedPayload;
@@ -143,7 +190,7 @@ export async function handleAuthCallback(req: IncomingMessage, res: ServerRespon
   const error = url.searchParams.get("error");
   if (error) {
     const description = url.searchParams.get("error_description") ?? "Unknown error";
-    logger.error(`OAuth error from Google: ${error} - ${description}`);
+    logger.error(`OAuth error from Auth0: ${error} - ${description}`);
     res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
     res.end(renderErrorPage("Authentication failed. Please close this window and try again."));
     return;
@@ -168,18 +215,18 @@ export async function handleAuthCallback(req: IncomingMessage, res: ServerRespon
   try {
     const tokens = await exchangeCodeForTokens(code);
     if (!tokens.id_token) {
-      throw new Error("Missing id_token in Google response");
+      throw new Error("Missing id_token in Auth0 response");
     }
 
-    const payload = await verifyGoogleIdToken(tokens.id_token, { nonce: storedState.nonce });
-    const user = await upsertGoogleUser({
+    const payload = await verifyAuth0Token(tokens.id_token, { nonce: storedState.nonce });
+    const user = await upsertIdentityUser(AUTH0_PROVIDER, {
       sub: payload.sub,
       email: payload.email!,
       name: payload.name ?? null,
       picture: payload.picture ?? null,
     });
 
-    logger.info(`🔐 Authenticated Google user ${user.email} (${user.id})`);
+    logger.info(`🔐 Authenticated Auth0 user ${user.email} (${user.id})`);
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(renderSuccessPage(tokens.id_token, storedState.nonce));

@@ -8,8 +8,8 @@ import { logger } from "../config/logger.js";
 import { registerRoutes } from "./routes.js";
 import { checkDatabaseConnection } from "./db.js";
 import { prisma } from "./prisma.js";
-import { handleAuthCallback, handleAuthLogin, verifyGoogleIdToken } from "./auth.js";
-import { upsertGoogleUser } from "./userRepository.js";
+import { AUTH0_PROVIDER, handleAuthCallback, handleAuthLogin, verifyAuth0Token } from "./auth.js";
+import { upsertIdentityUser } from "./userRepository.js";
 import { runWithRequestContext } from "./requestContext.js";
 
 const resourceMetadataUrl = new URL("/.well-known/oauth-protected-resource", env.APP_BASE_URL).toString();
@@ -87,8 +87,8 @@ export async function startServer() {
         }
 
         try {
-          const payload = await verifyGoogleIdToken(token);
-          const user = await upsertGoogleUser({
+          const payload = await verifyAuth0Token(token);
+          const user = await upsertIdentityUser(AUTH0_PROVIDER, {
             sub: payload.sub,
             email: payload.email!,
             name: payload.name ?? null,

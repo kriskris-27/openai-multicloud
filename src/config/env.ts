@@ -18,10 +18,11 @@ const EnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
-  GOOGLE_CLIENT_ID: z.string(),
-  GOOGLE_CLIENT_SECRET: z.string(),
+  AUTH0_ISSUER: z.string().url(),
+  AUTH0_CLIENT_ID: z.string(),
+  AUTH0_CLIENT_SECRET: z.string(),
+  AUTH0_AUDIENCE: z.string(),
   OAUTH_REDIRECT_URI: z.string().url(),
-  OAUTH_AUTHORIZATION_SERVER: z.string().url().default("https://accounts.google.com"),
   OAUTH_RESOURCE_ID: z.string().optional(),
 });
 
@@ -29,7 +30,8 @@ const parsedEnv = EnvSchema.parse(process.env);
 
 export const env = {
   ...parsedEnv,
-  OAUTH_RESOURCE_ID: parsedEnv.OAUTH_RESOURCE_ID ?? parsedEnv.APP_BASE_URL,
+  OAUTH_AUTHORIZATION_SERVER: parsedEnv.AUTH0_ISSUER,
+  OAUTH_RESOURCE_ID: parsedEnv.OAUTH_RESOURCE_ID ?? parsedEnv.AUTH0_AUDIENCE,
 };
 
             
