@@ -5,6 +5,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { registerRoutes } from "./routes.js";
+import { checkDatabaseConnection } from "./db.js";
+import { prisma } from "./prisma.js";
 
 export async function startServer() {
   const server = new McpServer({
@@ -13,6 +15,9 @@ export async function startServer() {
   });
 
   registerRoutes(server);
+
+  await checkDatabaseConnection();
+  await prisma.$connect();
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

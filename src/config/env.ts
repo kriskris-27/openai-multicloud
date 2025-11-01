@@ -9,6 +9,11 @@ const EnvSchema = z.object({
   APP_NAME: z.string().default("openai-mcp-app"),
   APP_VERSION: z.string().default("1.0.0"),
   NODE_ENV: z.enum(["development", "production"]).default("development"),
+  DATABASE_URL: z.string().url(),
+  DATABASE_SSL_REJECT_UNAUTHORIZED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 });
 
 export const env = EnvSchema.parse(process.env);

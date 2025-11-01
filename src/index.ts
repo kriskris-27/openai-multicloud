@@ -1,3 +1,5 @@
+import { closeDatabasePool } from "./core/db.js";
+import { prisma } from "./core/prisma.js";
 import { startServer } from "./core/server.js";
 import { logger } from "./config/logger.js";
 
@@ -11,6 +13,8 @@ async function main() {
       httpServer.close();
       await transport.close();
       await server.close();
+      await prisma.$disconnect();
+      await closeDatabasePool();
 
       process.exit(0);
     };
@@ -27,6 +31,14 @@ async function main() {
   } catch (error) {
     const message = error instanceof Error ? error.stack ?? error.message : String(error);
     logger.error(`Failed to start MCP server: ${message}`);
+    await prisma.$disconnect().catch((dbError) => {
+      const dbMessage = dbError instanceof Error ? dbError.message : String(dbError);
+      logger.error(`Failed to disconnect Prisma client: ${dbMessage}`);
+    });
+    await closeDatabasePool().catch((dbError) => {
+      const dbMessage = dbError instanceof Error ? dbError.message : String(dbError);
+      logger.error(`Failed to close database pool: ${dbMessage}`);
+    });
     process.exitCode = 1;
   }
 }
