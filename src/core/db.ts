@@ -4,11 +4,15 @@ import { Pool } from "pg";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 
+const sslConfig = env.DATABASE_SSL_ENABLED
+  ? env.DATABASE_SSL_REJECT_UNAUTHORIZED
+    ? { rejectUnauthorized: true }
+    : { rejectUnauthorized: false }
+  : false;
+
 const poolConfig: PoolConfig = {
   connectionString: env.DATABASE_URL,
-  ssl: env.DATABASE_SSL_REJECT_UNAUTHORIZED
-    ? { rejectUnauthorized: true }
-    : { rejectUnauthorized: false },
+  ssl: sslConfig,
 };
 
 export const dbPool = new Pool(poolConfig);

@@ -22,7 +22,17 @@ type StoredState = {
 
 const pendingStates = new Map<string, StoredState>();
 
+function cleanupExpiredStates() {
+  const now = Date.now();
+  for (const [state, record] of pendingStates) {
+    if (now - record.createdAt > OAUTH_STATE_TTL_MS) {
+      pendingStates.delete(state);
+    }
+  }
+}
+
 function createState(): { state: string; nonce: string } {
+  cleanupExpiredStates();
   const state = crypto.randomBytes(16).toString("hex");
   const nonce = crypto.randomBytes(16).toString("hex");
   pendingStates.set(state, { createdAt: Date.now(), nonce });
@@ -30,6 +40,7 @@ function createState(): { state: string; nonce: string } {
 }
 
 function validateState(state: string | null): StoredState | null {
+  cleanupExpiredStates();
   if (!state) {
     return null;
   }
@@ -129,7 +140,10 @@ async function fetchAuth0UserInfo(accessToken: string): Promise<Auth0TokenPayloa
   }
 }
 
-export async function verifyAuth0Token(token: string, options?: { nonce?: string }): Promise<Auth0TokenPayload> {
+export async function verifyAuth0Token(
+  token: string,
+  options?: { nonce?: string; accessToken?: string }
+): Promise<Auth0TokenPayload> {
   const getKey = auth0Jwks as JWTVerifyGetKey;
   const allowedAudiences = [env.AUTH0_AUDIENCE, env.AUTH0_CLIENT_ID].filter(Boolean) as string[];
 
@@ -146,7 +160,7 @@ export async function verifyAuth0Token(token: string, options?: { nonce?: string
     }
   }
 
-  const { nonce, ...restOptions } = options ?? {};
+  const { nonce, accessToken } = options ?? {};
   if (nonce) {
     (verifyOptions as JWTVerifyOptions & { nonce: string }).nonce = nonce;
   }
@@ -160,7 +174,8 @@ export async function verifyAuth0Token(token: string, options?: { nonce?: string
   }
 
   if (!typedPayload.email) {
-    const userInfo = await fetchAuth0UserInfo(token);
+    const userInfoToken = accessToken ?? token;
+    const userInfo = await fetchAuth0UserInfo(userInfoToken);
     if (userInfo?.email) {
       typedPayload.email = userInfo.email;
       if (userInfo.name !== undefined) {
@@ -218,7 +233,10 @@ export async function handleAuthCallback(req: IncomingMessage, res: ServerRespon
       throw new Error("Missing id_token in Auth0 response");
     }
 
-    const payload = await verifyAuth0Token(tokens.id_token, { nonce: storedState.nonce });
+    const payload = await verifyAuth0Token(tokens.id_token, {
+      nonce: storedState.nonce,
+      accessToken: tokens.access_token,
+    });
     const user = await upsertIdentityUser(AUTH0_PROVIDER, {
       sub: payload.sub,
       email: payload.email!,
@@ -240,6 +258,7 @@ export async function handleAuthCallback(req: IncomingMessage, res: ServerRespon
 
 function renderSuccessPage(idToken: string, nonce: string) {
   const payload = JSON.stringify({ id_token: idToken, nonce });
+  const targetOrigin = JSON.stringify(new URL(env.APP_BASE_URL).origin);
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -250,7 +269,8 @@ function renderSuccessPage(idToken: string, nonce: string) {
   <body>
     <script>
       const payload = ${payload};
-      window.opener?.postMessage({ type: "authorization_response", payload }, "*");
+      const targetOrigin = ${targetOrigin};
+      window.opener?.postMessage({ type: "authorization_response", payload }, targetOrigin);
       window.close();
     </script>
     <p>Authentication complete. You may close this window.</p>

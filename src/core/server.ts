@@ -87,7 +87,7 @@ export async function startServer() {
         }
 
         try {
-          const payload = await verifyAuth0Token(token);
+          const payload = await verifyAuth0Token(token, { accessToken: token });
           const user = await upsertIdentityUser(AUTH0_PROVIDER, {
             sub: payload.sub,
             email: payload.email!,
